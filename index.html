@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skid-Steer Simulator</title>
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--mut:#666;--pan:#f3f4f6;--bd:#d4d4d8;--acc:#2563eb}
+@media(prefers-color-scheme:dark){:root{--bg:#18181b;--fg:#f4f4f5;--mut:#a1a1aa;--pan:#27272a;--bd:#3f3f46;--acc:#60a5fa}}
+*{box-sizing:border-box}body{margin:0;font:13px system-ui,sans-serif;background:var(--bg);color:var(--fg);display:flex;height:100vh}
+#main{flex:1;display:flex;flex-direction:column;min-width:0;padding:8px;gap:8px}
+canvas{width:100%;flex:1;min-height:0;border:1px solid var(--bd);border-radius:6px;background:#eef0f2}
+#side{width:310px;overflow-y:auto;padding:8px;background:var(--pan);border-left:1px solid var(--bd)}
+h3{margin:12px 0 4px;font-size:12px;text-transform:uppercase;color:var(--mut)}
+.row{display:flex;justify-content:space-between;margin-top:6px}.row b{font-weight:600}
+input[type=range]{width:100%;margin:0}select,button{font:inherit;padding:3px 7px;margin:2px 2px 2px 0}
+table{border-collapse:collapse;width:100%;font-size:12px}td,th{padding:2px 6px;text-align:right;border-bottom:1px solid var(--bd)}th:first-child,td:first-child{text-align:left}
+#sum{font:12px ui-monospace,monospace;white-space:pre;color:var(--fg)}.warn{color:#dc2626;font-weight:600}
+@media(max-width:800px){body{flex-direction:column;height:auto}#side{width:100%}canvas{height:60vh;flex:none}}
+</style></head><body>
+<div id="main"><canvas id="cv"></canvas>
+<div style="overflow-x:auto"><table id="tab"></table></div><div id="sum"></div></div>
+<div id="side"><div id="ctl"></div></div>
+<script>
+//PHYS-START
+const g=9.81,Jw=.01,Jm=6e-5,Kc=.2,Ki=1.5,tauS=.05,RA=1.2,dt=5e-4;
+const TER={"Hard (asphalt)":{mx:.8,my:.7,K:.004,crr:.02,bek:null},Gravel:{mx:.55,my:.5,K:.01,crr:.04,bek:null},
+"Dry sand":{mx:.55,my:.5,K:.01,crr:.01,bek:[1.1,.99,1528.43]},"Sandy loam / grass":{mx:.5,my:.45,K:.025,crr:.01,bek:[.7,5.27,1515.04]},
+Snow:{mx:.25,my:.2,K:.025,crr:.01,bek:[1.6,4.37,196.72]}};
+const P0={v:.8,w:.8,L:.6,b:.5,r:.1,bw:.06,xcg:0,h:.12,m:20,kz:1,mx:.8,my:.7,K:.004,crr:.02,bek:null,slope:0,psi:0,CdA:.1,
+Vbat:24,Rbat:.05,Rm:.6,kt:.05,Ng:10,eta:.9,Imax:20,rho:.5};
+let P=Object.assign({},P0),D={},s,out={};
+const cl=(x,a,b)=>Math.max(a,Math.min(b,x));
+function derive(){const{L,b,m}=P;const xc=cl(P.xcg,-L/2,L/2);D.xc=xc;
+D.xg=[L/2,L/2,-L/2,-L/2];D.yg=[b/2,-b/2,b/2,-b/2];D.xr=D.xg.map(x=>x-xc);D.yr=D.yg;
+D.phi=P.slope*Math.PI/180;D.psi=P.psi*Math.PI/180;D.W=m*g*Math.cos(D.phi);
+const a=(L/2+xc)/L;D.Ns=[a,a,1-a,1-a].map(k=>D.W*k/2);D.Iz=P.kz*m*(L*L+b*b)/12+m*xc*xc;
+D.Je=Jw+Jm*P.Ng*P.Ng;const wl=(P.v-P.w*b/2)/P.r,wr=(P.v+P.w*b/2)/P.r;D.omc=[wl,wr,wl,wr];}
+function reset(){derive();s={X:0,Y:0,th:0,vx:0,vy:0,w:0,om:[0,0,0,0],zi:[0,0,0,0],zx:[0,0,0,0],zy:[0,0,0,0],N:D.Ns.slice(),I:[0,0,0,0],Ib:0,Vt:P.Vbat,lift:false,
+Fx:[0,0,0,0],Fy:[0,0,0,0],sx:[0,0,0,0],sy:[0,0,0,0],tw:[0,0,0,0],Rr:[0,0,0,0],Trr:[0,0,0,0]};trail=[];}
+let trail=[];
+function step(){const r=P.r,{vx,vy,w}=s;let SFx=0,SFy=0,SM=0,Ib=0;
+const Vt=cl(P.Vbat-P.Rbat*s.Ib,0,1.3*P.Vbat);s.Vt=Vt;
+for(let i=0;i<4;i++){const N=s.N[i],u=vx-w*D.yr[i],v=vy+w*D.xr[i],sx=u-r*s.om[i],sy=v,sm=Math.hypot(sx,sy);
+s.zx[i]+=dt*(sx-sm*s.zx[i]/P.K);s.zy[i]+=dt*(sy-sm*s.zy[i]/P.K);
+const cd=1.4*Math.sqrt(Math.max(P.mx*N/P.K,0)*Math.max(N/g,.2));
+const fxn=-s.zx[i]/P.K-cd*sx/Math.max(P.mx*N,1e-6),fyn=-s.zy[i]/P.K-cd*sy/Math.max(P.my*N,1e-6);
+const mg=Math.hypot(fxn,fyn),sc=mg>1?1/mg:1,fx=P.mx*N*fxn*sc,fy=P.my*N*fyn*sc;
+let Rr=P.crr*N;if(P.bek){const[n,kc,kp]=P.bek,kk=(kc+P.bw*kp)*1000,zs=Math.pow(3*N/((3-n)*kk*Math.sqrt(2*r)),2/(2*n+1));Rr+=kk*Math.pow(zs,n+1)/(n+1);}
+const Trr=r*Rr*Math.tanh(s.om[i]/.3);
+const e=D.omc[i]-s.om[i];s.zi[i]=cl(s.zi[i]+dt*e,-1/Ki,1/Ki);const duty=cl(Kc*e+Ki*s.zi[i],-1,1);
+const omm=P.Ng*s.om[i],I=cl((duty*Vt-P.kt*omm)/P.Rm,-P.Imax,P.Imax),tm=P.kt*I,tw=P.Ng*tm*(tm*omm>=0?P.eta:1/P.eta);
+s.I[i]=I;Ib+=duty*I;
+const msc=-(2/3)*.5*(P.mx+P.my)*N*(P.bw/2)*Math.tanh(w/.1);
+SFx+=fx;SFy+=fy;SM+=D.xr[i]*fy-D.yr[i]*fx+msc;
+s.Fx[i]=fx;s.Fy[i]=fy;s.sx[i]=sx;s.sy[i]=sy;s.tw[i]=tw;s.Rr[i]=Rr;s.Trr[i]=Trr;
+s.om[i]+=dt*(tw-r*fx-Trr)/D.Je;}
+s.Ib=Ib;
+const gx=-g*Math.sin(D.phi)*Math.cos(s.th-D.psi),gy=g*Math.sin(D.phi)*Math.sin(s.th-D.psi),V=Math.hypot(vx,vy);
+const ax=(SFx-.5*RA*P.CdA*V*vx)/P.m+gx+w*vy,ay=(SFy-.5*RA*P.CdA*V*vy)/P.m+gy-w*vx,aw=SM/D.Iz;
+const Nf=(-P.h*SFx+D.W*(P.L/2+D.xc))/P.L,Nr=D.W-Nf,T=-P.h*SFy/P.b,q=P.rho;
+const Nt=[Nf/2+q*T,Nf/2-q*T,Nr/2+(1-q)*T,Nr/2-(1-q)*T];s.lift=Math.min(...Nt)<=0;
+for(let i=0;i<4;i++)s.N[i]+=dt*(Math.max(Nt[i],0)-s.N[i])/tauS;
+const c=Math.cos(s.th),sn=Math.sin(s.th);
+s.X+=dt*(vx*c-vy*sn);s.Y+=dt*(vx*sn+vy*c);s.th+=dt*w;s.vx+=dt*ax;s.vy+=dt*ay;s.w+=dt*aw;}
+//PHYS-END
+// ---------- UI ----------
+const CFG=[["Command",["v","Speed v [m/s]",-2,2,.05],["w","Yaw rate w [rad/s]",-3,3,.05]],
+["Chassis",["L","Wheelbase [m]",.2,1.2,.01],["b","Track width [m]",.2,1.2,.01],["r","Wheel radius [m]",.04,.25,.005],["bw","Wheel width [m]",.02,.2,.005],
+["xcg","CG offset x [m]",-.3,.3,.01],["h","CG height [m]",.02,.5,.01],["m","Mass [kg]",2,150,1],["kz","Yaw inertia factor",.4,2,.05]],
+["Terrain","TERRAIN",["mx","Friction along wheel",.05,1.5,.01],["my","Friction across wheel",.05,1.5,.01],["K","Soil shear modulus K [m]",.002,.04,.001],
+["crr","Rolling resistance coeff",0,.15,.005],["slope","Slope [deg]",0,45,.5],["psi","Uphill direction [deg]",-180,180,5],["CdA","Aero drag Cd*A [m2]",0,1.5,.05]],
+["Drivetrain",["Vbat","Battery voltage [V]",6,60,1],["Rbat","Battery internal R [ohm]",0,.5,.005],["Rm","Motor terminal R [ohm]",.05,3,.05],
+["kt","Motor kt [N*m/A]",.01,.2,.005],["Ng","Gear ratio",1,60,.5],["eta","Gearbox efficiency",.5,1,.01],["Imax","Current limit [A]",1,80,1],
+["rho","Front share of lateral load transfer",0,1,.05]]];
+const ctl=document.getElementById("ctl"),inp={},val={};let paused=false;
+ctl.innerHTML='<div><button id="bS">Straight</button><button id="bT">Turn</button><button id="bP">Spin</button><button id="bX">Stop</button><button id="bR">Reset</button><button id="bZ">Pause</button></div>';
+for(const sec of CFG){const h=document.createElement("h3");h.textContent=sec[0];ctl.appendChild(h);
+for(const it of sec.slice(1)){if(it==="TERRAIN"){const sl=document.createElement("select");
+for(const k in TER){const o=document.createElement("option");o.textContent=k;sl.appendChild(o);}
+sl.onchange=()=>{Object.assign(P,TER[sl.value]);sync();derive();};ctl.appendChild(sl);continue;}
+const[k,lab,mn,mx,st]=it,d=document.createElement("div");d.innerHTML=`<div class="row"><span>${lab}</span><b id="v_${k}"></b></div><input type="range" min="${mn}" max="${mx}" step="${st}">`;
+const r=d.querySelector("input");inp[k]=r;val[k]=d.querySelector("b");
+r.oninput=()=>{P[k]=+r.value;val[k].textContent=P[k];derive();};ctl.appendChild(d);}}
+function sync(){for(const k in inp){inp[k].value=P[k];val[k].textContent=+(+P[k]).toFixed(3);}}
+const pre=(v,w)=>{P.v=v;P.w=w;sync();derive();};
+bS.onclick=()=>pre(.8,0);bT.onclick=()=>pre(.8,.8);bP.onclick=()=>pre(0,2);bX.onclick=()=>pre(0,0);
+bR.onclick=()=>{P=Object.assign({},P0);document.querySelector("select").selectedIndex=0;sync();reset();};
+bZ.onclick=()=>{paused=!paused;bZ.textContent=paused?"Resume":"Pause";};
+sync();reset();
+const cv=document.getElementById("cv"),ctx=cv.getContext("2d");
+function arrow(x,y,dx,dy,col){const l=Math.hypot(dx,dy);if(l<1e-4)return;ctx.strokeStyle=col;ctx.fillStyle=col;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+dx,y+dy);ctx.stroke();
+const a=Math.atan2(dy,dx),h=Math.min(.06,l*.4);ctx.beginPath();ctx.moveTo(x+dx,y+dy);ctx.lineTo(x+dx-h*Math.cos(a-.4),y+dy-h*Math.sin(a-.4));ctx.lineTo(x+dx-h*Math.cos(a+.4),y+dy-h*Math.sin(a+.4));ctx.fill();}
+function draw(){const dpr=devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight;if(cv.width!==W*dpr||cv.height!==H*dpr){cv.width=W*dpr;cv.height=H*dpr;}
+ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);const S=Math.min(W,H)/4.5;
+ctx.setTransform(dpr*S,0,0,-dpr*S,dpr*W/2,dpr*H/2);ctx.translate(-s.X,-s.Y);ctx.lineWidth=2/S;
+ctx.fillStyle="#9aa0a6";const hw=W/S/2+1,hh=H/S/2+1;
+for(let x=Math.floor(s.X-hw);x<=s.X+hw;x++)for(let y=Math.floor(s.Y-hh);y<=s.Y+hh;y++)ctx.fillRect(x-.01,y-.01,.02,.02);
+ctx.strokeStyle="#2563eb";ctx.beginPath();trail.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.stroke();
+ctx.save();ctx.translate(s.X,s.Y);ctx.rotate(s.th);
+ctx.fillStyle="#cfe0ff";ctx.strokeStyle="#1e3a8a";ctx.fillRect(-D.xc-P.L/2-.03,-P.b/2+P.bw/2,P.L+.06,P.b-P.bw);ctx.strokeRect(-D.xc-P.L/2-.03,-P.b/2+P.bw/2,P.L+.06,P.b-P.bw);
+for(let i=0;i<4;i++){ctx.fillStyle="#333";ctx.fillRect(D.xr[i]-P.r,D.yr[i]-P.bw/2,2*P.r,P.bw);}
+ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(0,0,.03,0,7);ctx.fill();ctx.stroke();
+const sf=.45/(P.m*g/4);for(let i=0;i<4;i++)arrow(D.xr[i],D.yr[i],s.Fx[i]*sf,s.Fy[i]*sf,"#c026d3");
+if(Math.abs(s.w)>.02){const xI=-s.vy/s.w,yI=s.vx/s.w,R=Math.hypot(xI,yI);ctx.setLineDash([.05,.05]);ctx.strokeStyle="#888";ctx.beginPath();ctx.arc(xI,yI,R,0,7);ctx.stroke();ctx.setLineDash([]);
+ctx.fillStyle="#dc2626";ctx.beginPath();ctx.arc(xI,yI,.07,0,7);ctx.fill();}
+ctx.restore();ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle="#444";ctx.font="12px system-ui";
+ctx.fillText("magenta = friction force on chassis   red dot = ICR (result)   blue = path",8,16);}
+function report(){const r=P.r,{vx,vy,w}=s,f=(x,d=2)=>(x>=0?"+":"")+x.toFixed(d);
+let t="<tr><th>Wheel</th><th>rad/s</th><th>rpm</th><th>I [A]</th><th>N [N]</th><th>Fx [N]</th><th>Fy [N]</th></tr>";
+["FL","FR","RL","RR"].forEach((n,i)=>t+=`<tr><td>${n}</td><td>${f(s.om[i])}</td><td>${f(s.om[i]*30/Math.PI,0)}</td><td>${f(s.I[i],1)}</td><td>${s.N[i].toFixed(1)}</td><td>${f(s.Fx[i],1)}</td><td>${f(s.Fy[i],1)}</td></tr>`);
+document.getElementById("tab").innerHTML=t;
+let o=`Body vx ${f(vx,3)}  vy ${f(vy,3)} m/s   w ${f(w,3)} rad/s\n`;
+if(Math.abs(w)>.02){const vL=r*(s.om[0]+s.om[2])/2,vR=r*(s.om[1]+s.om[3])/2,yL=(vx-vL)/w,yR=(vx-vR)/w;
+o+=`ICR (${f(-vy/w+D.xc)}, ${f(vx/w)}) m   effective chi ${((yL-yR)/P.b).toFixed(2)}   yaw achieved ${P.w?(100*w/P.w).toFixed(0)+"%":"n/a"}\n`;}
+else o+="ICR at infinity (straight)\n";
+o+=`Tip limit: lateral ${((P.b/2)/P.h).toFixed(2)} g, longitudinal ${(Math.min(P.L/2-D.xc,P.L/2+D.xc)/P.h).toFixed(2)} g\n`;
+o+=`Battery ${s.Vt.toFixed(1)} V  ${s.Ib.toFixed(1)} A   shaft ${s.tw.reduce((a,b,i)=>a+b*s.om[i],0).toFixed(0)} W   skid loss ${s.Fx.reduce((a,b,i)=>a-b*s.sx[i]-s.Fy[i]*s.sy[i],0).toFixed(0)} W\n`;
+let el=document.getElementById("sum");el.textContent=o;
+const w2=[];if(s.lift)w2.push("WHEEL LIFT-OFF / TIPPING RISK");const nl=s.I.filter(i=>Math.abs(i)>=.98*P.Imax).length;if(nl)w2.push("CURRENT LIMIT on "+nl+"/4 motors");
+if(w2.length){const d=document.createElement("span");d.className="warn";d.textContent=w2.join(" | ");el.appendChild(d);}}
+let last=performance.now(),fr=0;
+function loop(t){const el=Math.min((t-last)/1000,.05);last=t;
+if(!paused){for(let k=0,n=Math.round(el/dt);k<n;k++)step();
+if(![s.X,s.vx,s.vy,s.w,...s.om,...s.N].every(isFinite))reset();
+if(fr%3===0){trail.push([s.X,s.Y]);if(trail.length>3000)trail.shift();}
+if(fr++%8===0)report();}
+draw();requestAnimationFrame(loop);}
+requestAnimationFrame(loop);
+</script></body></html>
