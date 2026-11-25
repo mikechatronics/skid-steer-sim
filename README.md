@@ -5,13 +5,13 @@ models, and explore a full-physics model where the instantaneous center of
 rotation (ICR), wheel spin, skid, loads and motor currents *emerge* from friction,
 terrain and drivetrain limits.
 
-[![Open in MATLAB Online](https://www.mathworks.com/images/responsive/global/open-in-matlab-online.svg)](https://matlab.mathworks.com/open/github/v1?repo=YOUR-USERNAME/skid-steer-sim)
+[![Open in MATLAB Online](https://www.mathworks.com/images/responsive/global/open-in-matlab-online.svg)](https://matlab.mathworks.com/open/github/v1?repo=mikechatronics/skid-steer-sim)
 
 
 
 ## Try it in your browser (no install)
 
-**[Open the web version](https://YOUR-USERNAME.github.io/skid-steer-sim/)**, or download
+**[Open the web version](https://mikechatronics.github.io/skid-steer-sim/)**, or download
 [`index.html`](index.html) and double-click it. It runs offline in any browser and
 has the same physics as `skidSteerPro.m` (one view instead of two).
 
